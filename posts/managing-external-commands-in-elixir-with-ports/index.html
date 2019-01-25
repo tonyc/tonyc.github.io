@@ -221,10 +221,12 @@ end</code></pre></td></tr></table>
 </div>
 </div>
 
+<p>There&rsquo;s a bit of GenServer boilerplate here, but most of the meat is in <code>init/1</code>, where we call
+<a href="https://hexdocs.pm/elixir/Port.html#open/2">Port.open/2&gt;</a> to register our process to receive messages.</p>
+
 <p>Our GenServer will now get messages as a tuple in the format of <code>{port, {:data, text}}</code> that we can deal with in a <code>handle_info</code> callback.</p>
 
-<p>There&rsquo;s a bit of GenServer boilerplate here, but most of the meat is in <code>init/1</code>, where we call
-<a href="https://hexdocs.pm/elixir/Port.html#open/2">Port.open/2&gt;</a>.</p>
+<p>If you&rsquo;ve used GenServer, you&rsquo;re probably familiar with the <code>handle_cast</code> and <code>handle_call</code> callbacks, but possibly not <code>handle_info</code>. handle_info is called asynchronously when a message is sent directly to a process, e.g. by using <a href="https://hexdocs.pm/elixir/Kernel.html#send/2">Kernel.send/2</a> or after some amount of time using <a href="https://hexdocs.pm/elixir/Process.html#send_after/4">Process.send_after/4</a>.</p>
 
 <p>The first argument, <code>{:spawn, @command}</code>, will run the external program <code>@command</code>. There&rsquo;s also a <code>{:spawn_executable, @command}</code> form that handles commands or arguments with spaces in it.</p>
 
@@ -391,8 +393,8 @@ end</code></pre></td></tr></table>
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">11
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">12
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">13
-</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
-</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">15
+</span><span style="display:block;width:100%;background-color:#3c3d38"><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
+</span></span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">15
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">16
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">17
 </span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">18
@@ -455,8 +457,8 @@ end</code></pre></td></tr></table>
 
   def init(args \\ []) do
     <span style="color:#a6e22e">Process</span><span style="color:#f92672">.</span>flag(<span style="color:#e6db74">:trap_exit</span>, true)
-
-    port <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>open({<span style="color:#e6db74">:spawn</span>, <span style="color:#a6e22e">@command</span>}, [<span style="color:#e6db74">:binary</span>, <span style="color:#e6db74">:exit_status</span>])
+<span style="display:block;width:100%;background-color:#3c3d38">
+</span>    port <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>open({<span style="color:#e6db74">:spawn</span>, <span style="color:#a6e22e">@command</span>}, [<span style="color:#e6db74">:binary</span>, <span style="color:#e6db74">:exit_status</span>])
     <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>monitor(port)
 
     {<span style="color:#e6db74">:ok</span>, %{<span style="color:#e6db74">port</span>: port, <span style="color:#e6db74">latest_output</span>: nil, <span style="color:#e6db74">exit_status</span>: nil} }
