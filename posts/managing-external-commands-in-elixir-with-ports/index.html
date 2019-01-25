@@ -1,0 +1,565 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Managing External Commands in Elixir with Ports // tonyc.github.io</title>
+    <meta charset="utf-8" />
+    <meta name="generator" content="Hugo 0.53" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="author" content="Tony Collen" />
+    <meta name="description" content="" />
+    <base href="https://tonyc.github.io" />
+    <link rel="stylesheet" href="https://tonyc.github.io/css/main.min.f17bf00911a9eec9b8e813cd3e231643e56bc498bc1f4b252923e7039aaa6a4c.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a href="/"><img class="app-header-avatar" src="./avatar.jpg" /></a>
+      <h1>tonyc.github.io</h1>
+      <p>this is the description</p>
+      <div class="app-header-social">
+        
+      </div>
+    </header>
+    <main class="app-container">
+      
+  <article class="post">
+    <header class="post-header">
+      <h1 class ="post-title">Managing External Commands in Elixir with Ports</h1>
+      <div class="post-meta">
+        <div>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-calendar"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+          Jan 21, 2019
+        </div>
+        <div>
+          
+          
+        </div>
+      </div>
+    </header>
+    <div class="post-content">
+      
+
+<h2 id="background">Background</h2>
+
+<p>Elixir and OTP excel at asynchronous and long-running tasks, and likewise, they seem like a great fit for interfacing with the <em>non</em>-Elixir world, particularly being able to shell-out and monitor a long running external OS process.</p>
+
+<p>In the Ruby world, we often reach for tools like Sidekiq or Resque to run these commands asynchronously, outside of the normal HTTP request/response cycle that we&rsquo;re used to when we usually build an app or API with Rails.</p>
+
+<p>Tasks like video encoding (ffmpeg), photo processing (<a href="https://krpano.com/">krpano</a>), or other random &ldquo;weird&rdquo; utilities are good examples (<a href="http://kmkeen.com/rtl-demod-guide/">rtl-fm</a> or <a href="https://github.com/EliasOenal/multimon-ng">multimon-ng</a> are on my radar to play around with).</p>
+
+<p>Many of these tools report progress on STDOUT or STDERR, and there&rsquo;s a compelling user experience case for being able to capture this output, and display progress in a web browser in real-time. Elixir and OTP give us several great tools to approach this problem.</p>
+
+<p>There are also other packages in Hex (e.g. Porcelain) that aim to make working with ports easier, but I eventually settled on dealing directly with Ports and GenServer myself, so I could understand how it was working on a lower level.</p>
+
+<p>This article assumes a basic understanding of Elixir, GenServer and *nix shell scripting and processes. It also assumes you have a working Ruby installation, but <code>$YOUR_FAVORITE_LANGUAGE</code> can be substituted for the Ruby script below.</p>
+
+<h2 id="what-s-a-port">What&rsquo;s a Port?</h2>
+
+<p>From the <a href="https://hexdocs.pm/elixir/Port.html">Elixir docs:</a></p>
+
+<pre><code>Ports provide a mechanism to start operating system processes
+external to the Erlang VM and communicate with them via message passing.
+</code></pre>
+
+<p>That sounds exactly like what we need! Fortunately the Elixir docs are pretty good.</p>
+
+<h2 id="mix-new">mix new</h2>
+
+<p>Let&rsquo;s create a new mix project to give us some structure to play around with.</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-bash" data-lang="bash">$ mix new ports_example
+* creating README.md
+* creating .formatter.exs
+* creating .gitignore
+* creating mix.exs
+* creating config
+* creating config/config.exs
+* creating lib
+* creating lib/ports_example.ex
+* creating test
+* creating test/test_helper.exs
+* creating test/ports_example_test.exs
+
+Your Mix project was created successfully.
+You can use <span style="color:#e6db74">&#34;mix&#34;</span> to compile it, test it, and more:
+
+    cd ports_example
+    mix test
+
+Run <span style="color:#e6db74">&#34;mix help&#34;</span> <span style="color:#66d9ef">for</span> more commands.
+
+$ cd ports_example</code></pre></div>
+<h2 id="a-long-running-command">A long-running command</h2>
+
+<p>Next, we need a long-running command to monitor. Let&rsquo;s say you&rsquo;ve got a program that takes a while to finish, occasionally writes its progress to STDOUT, and then exits to the shell with a zero return status, or non-zero if there&rsquo;s an error.</p>
+
+<p>Here&rsquo;s a Ruby script that does just that, but any program that operates similar to this would work.</p>
+
+<p>Make a directory at the top of your new mix project called <code>bin/</code> and put the following script there:</p>
+
+<h3 id="bin-long-running-rb"><code>bin/long_running.rb</code></h3>
+
+<div class="highlight"><div style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-ruby" data-lang="ruby"><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-ruby" data-lang="ruby"><span style="color:#75715e">#!/usr/bin/env ruby</span>
+
+puts <span style="color:#e6db74">&#34;Starting up&#34;</span>
+
+<span style="color:#66d9ef">TOTAL</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">10</span>
+
+<span style="color:#66d9ef">TOTAL</span><span style="color:#f92672">.</span>times <span style="color:#66d9ef">do</span> <span style="color:#f92672">|</span>n<span style="color:#f92672">|</span>
+  <span style="color:#66d9ef">STDOUT</span><span style="color:#f92672">.</span>flush
+  sleep <span style="color:#ae81ff">1</span>
+  puts <span style="color:#e6db74">&#34;Progress: step </span><span style="color:#e6db74">#{</span>n<span style="color:#f92672">+</span><span style="color:#ae81ff">1</span><span style="color:#e6db74">}</span><span style="color:#e6db74"> of </span><span style="color:#e6db74">#{</span><span style="color:#66d9ef">TOTAL</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#66d9ef">end</span>
+
+<span style="color:#66d9ef">STDOUT</span><span style="color:#f92672">.</span>flush
+puts <span style="color:#e6db74">&#34;Done&#34;</span></code></pre></td></tr></table>
+</div>
+</div>
+
+<p>The only thing of note is that we need to flush STDOUT so the Port sees the updates line-by-line.</p>
+
+<h2 id="port-of-entry">Port of Entry</h2>
+
+<p>Now we need some code to open the Port to the process and get updates!</p>
+
+<h3 id="lib-ports-example-basic-port-ex"><code>lib/ports_example/basic_port.ex</code></h3>
+
+<div class="highlight"><div style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir"><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">24
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">25
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">26
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">27
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">28
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">29
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">30
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">31
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">32
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">33
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">34
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">35
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">36
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">37
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">defmodule <span style="color:#a6e22e">PortsExample.BasicPort</span> do
+  use <span style="color:#a6e22e">GenServer</span>
+  require <span style="color:#a6e22e">Logger</span>
+
+  <span style="color:#a6e22e">@command</span> <span style="color:#e6db74">&#34;./bin/long_running.rb&#34;</span>
+
+  <span style="color:#75715e"># GenServer API</span>
+  def start_link(args \\ [], opts \\ []) do
+    <span style="color:#a6e22e">GenServer</span><span style="color:#f92672">.</span>start_link(__MODULE__, args, opts)
+  end
+
+  def init(_args \\ []) do
+    port <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>open({<span style="color:#e6db74">:spawn</span>, <span style="color:#a6e22e">@command</span>}, [<span style="color:#e6db74">:binary</span>, <span style="color:#e6db74">:exit_status</span>])
+
+    {<span style="color:#e6db74">:ok</span>, %{<span style="color:#e6db74">latest_output</span>: nil, <span style="color:#e6db74">exit_status</span>: nil} }
+  end
+
+  <span style="color:#75715e"># This callback handles data incoming from the command&#39;s STDOUT</span>
+  def handle_info({port, {<span style="color:#e6db74">:data</span>, text_line}}, state) do
+    latest_output <span style="color:#f92672">=</span> text_line <span style="color:#f92672">|&gt;</span> <span style="color:#a6e22e">String</span><span style="color:#f92672">.</span>trim
+    
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Latest output: </span><span style="color:#e6db74">#{</span>latest_output<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    {<span style="color:#e6db74">:noreply</span>, %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">latest_output</span>: latest_output}}
+  end
+
+  <span style="color:#75715e"># This callback tells us when the process exits</span>
+  def handle_info({port, {<span style="color:#e6db74">:exit_status</span>, status}}, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;External exit: :exit_status: </span><span style="color:#e6db74">#{</span>status<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    new_state <span style="color:#f92672">=</span> %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">exit_status</span>: status}
+    {<span style="color:#e6db74">:noreply</span>, %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">exit_status</span>: status}}
+  end
+
+  <span style="color:#75715e"># no-op catch-all callback for unhandled messages</span>
+  def handle_info(_msg, state), <span style="color:#e6db74">do</span>: {<span style="color:#e6db74">:noreply</span>, state}
+end</code></pre></td></tr></table>
+</div>
+</div>
+
+<p>Our GenServer will now get messages as a tuple in the format of <code>{port, {:data, text}}</code> that we can deal with in a <code>handle_info</code> callback.</p>
+
+<p>There&rsquo;s a bit of GenServer boilerplate here, but most of the meat is in <code>init/1</code>, where we call
+<a href="https://hexdocs.pm/elixir/Port.html#open/2">Port.open/2&gt;</a>.</p>
+
+<p>The first argument, <code>{:spawn, @command}</code>, will run the external program <code>@command</code>. There&rsquo;s also a <code>{:spawn_executable, @command}</code> form that handles commands or arguments with spaces in it.</p>
+
+<p>The second argument is the options.</p>
+
+<p>In the options, <code>:binary</code> means you&rsquo;ll get back &lsquo;binary&rsquo; data (instead of lists of bytes).</p>
+
+<p><code>:exit_status</code> is a nice option to include when you want to be notified that the program exited. We deal with this message on line 27 above where we handle the <code>:exit_status</code> message, where the variable <code>status</code> is the numeric exit code from the shell. Normal exits will be <code>0</code>, and non-zero exit codes indicate a failure.</p>
+
+<h2 id="let-s-run-it">Let&rsquo;s run it!</h2>
+
+<p>OK, enough explaining. Let&rsquo;s run this example!</p>
+
+<p>Open up an <code>iex</code> prompt:</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">iex(<span style="color:#ae81ff">27</span>)<span style="color:#f92672">&gt;</span> {<span style="color:#e6db74">:ok</span>, pid} <span style="color:#f92672">=</span> <span style="color:#a6e22e">PortsExample.BasicPort</span><span style="color:#f92672">.</span>start_link()
+{<span style="color:#e6db74">:ok</span>, <span style="color:#75715e">#PID&lt;0.269.0&gt;}</span>
+iex(<span style="color:#ae81ff">34</span>)<span style="color:#f92672">&gt;</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">33.782</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#a6e22e">Starting</span> up
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">34.785</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">1</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">35.787</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">2</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">36.790</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">3</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">37.794</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">4</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">38.798</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">5</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">39.801</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">6</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">40.805</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">7</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">41.808</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">8</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">42.811</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">9</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">43.812</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#e6db74">Progress</span>: step <span style="color:#ae81ff">10</span> of <span style="color:#ae81ff">10</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">43.813</span> [info]  <span style="color:#a6e22e">Latest</span> <span style="color:#e6db74">output</span>: <span style="color:#a6e22e">Done</span>
+<span style="color:#ae81ff">21</span>:<span style="color:#ae81ff">32</span>:<span style="color:#ae81ff">43.814</span> [info]  external <span style="color:#e6db74">exit</span>: <span style="color:#e6db74">:exit_status</span>: <span style="color:#ae81ff">0</span></code></pre></div>
+<p>Cool! Not only were we notified of each bit of text coming in from the external process,
+we were also notified when the process exited, as well as the exit code from the shell (in this case, zero).</p>
+
+<p>We can also inspect the GenServer&rsquo;s state by using <code>:sys.get_state/1</code>:</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">iex<span style="color:#f92672">&gt;</span> <span style="color:#e6db74">:sys</span><span style="color:#f92672">.</span>get_state(pid)
+%{<span style="color:#e6db74">exit_status</span>: <span style="color:#ae81ff">0</span>, <span style="color:#e6db74">latest_output</span>: <span style="color:#e6db74">&#34;Done&#34;</span>}</code></pre></div>
+<h2 id="monitoring-the-port">Monitoring the port</h2>
+
+<p>We can also be notified when the command exits in other ways, by using <code>Port.monitor/1</code>. Calling it will set up your GenServer to get a <code>handle_info</code> callback in the form of <code>{:DOWN, _ref, :port, port, :normal}, state</code>:</p>
+
+<div class="highlight"><div style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir"><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">24
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">25
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">26
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">27
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">28
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">29
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">30
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">31
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">32
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">33
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">34
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">35
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">36
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">37
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">38
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">39
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">40
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">41
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">42
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">43
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">defmodule <span style="color:#a6e22e">PortsExample.MonitoredPort</span> do
+  use <span style="color:#a6e22e">GenServer</span>
+  require <span style="color:#a6e22e">Logger</span>
+
+  <span style="color:#a6e22e">@command</span> <span style="color:#e6db74">&#34;./bin/long_running.rb&#34;</span>
+
+  <span style="color:#75715e"># GenServer API</span>
+  def start_link(args \\ [], opts \\ []) do
+    <span style="color:#a6e22e">GenServer</span><span style="color:#f92672">.</span>start_link(__MODULE__, args, opts)
+  end
+
+  def init(_args \\ []) do
+    port <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>open({<span style="color:#e6db74">:spawn</span>, <span style="color:#a6e22e">@command</span>}, [<span style="color:#e6db74">:binary</span>, <span style="color:#e6db74">:exit_status</span>])
+    <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>monitor(port)
+
+    {<span style="color:#e6db74">:ok</span>, %{<span style="color:#e6db74">port</span>: port, <span style="color:#e6db74">latest_output</span>: nil, <span style="color:#e6db74">exit_status</span>: nil} }
+  end
+
+  <span style="color:#75715e"># This callback handles data incoming from the command&#39;s STDOUT</span>
+  def handle_info({port, {<span style="color:#e6db74">:data</span>, text_line}}, %{<span style="color:#e6db74">port</span>: port} <span style="color:#f92672">=</span> state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Data: </span><span style="color:#e6db74">#{</span>inspect text_line<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">latest_output</span>: <span style="color:#a6e22e">String</span><span style="color:#f92672">.</span>trim(text_line)}}
+  end
+
+  <span style="color:#75715e"># This callback tells us when the process exits</span>
+  def handle_info({port, {<span style="color:#e6db74">:exit_status</span>, status}}, %{<span style="color:#e6db74">port</span>: port} <span style="color:#f92672">=</span> state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Port exit: :exit_status: </span><span style="color:#e6db74">#{</span>status<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    new_state <span style="color:#f92672">=</span> %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">exit_status</span>: status}
+
+    {<span style="color:#e6db74">:noreply</span>, new_state}
+  end
+
+  def handle_info({<span style="color:#e6db74">:DOWN</span>, _ref, <span style="color:#e6db74">:port</span>, port, <span style="color:#e6db74">:normal</span>}, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Handled :DOWN message from port: </span><span style="color:#e6db74">#{</span>inspect port<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, state}
+  end
+
+  def handle_info(msg, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Unhandled message: </span><span style="color:#e6db74">#{</span>inspect msg<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, state}
+  end
+end</code></pre></td></tr></table>
+</div>
+</div>
+
+<p>Now running it in IEX, we see the addition of handling the :DOWN message at the end of our output:</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir"><span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.203</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Progress: step 9 of 10</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.304</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Progress: step 10 of 10</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.304</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Done</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.306</span> [info]  <span style="color:#a6e22e">Port</span> <span style="color:#e6db74">exit</span>: <span style="color:#e6db74">:exit_status</span>: <span style="color:#ae81ff">0</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.306</span> [info]  <span style="color:#a6e22e">Handled</span> <span style="color:#e6db74">:DOWN</span> message from <span style="color:#e6db74">port</span>: <span style="color:#75715e">#Port&lt;0.53&gt;</span></code></pre></div>
+<p>You can use <code>Port.monitor</code> when you want additional information about when the command you&rsquo;re running exits, although I&rsquo;m not entirely sure what the benefit is of using it over using the <code>:exit_status</code> message, since you get a bit more information about the command&rsquo;s shell exit code with the <code>:exit_status</code> method.</p>
+
+<h2 id="trapping-process-exits">Trapping process exits</h2>
+
+<p>We can also use <code>Process.flag(:trap_exit, true)</code> to get some other information about the lifecycle of our GenServer.</p>
+
+<p>What happens when something forces your (GenServer) process to quit or crash? We can use <code>Process.flag(:trap_exit, true)</code> to be notified, and attempt to clean up the running command.</p>
+
+<p>Let&rsquo;s also keep track of the port in our GenServer&rsquo;s state so we can get some additional information about it:</p>
+
+<h3 id="lib-ports-example-trap-process-crash-ex"><code>lib/ports_example/trap_process_crash.ex</code></h3>
+
+<div class="highlight"><div style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir"><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">24
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">25
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">26
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">27
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">28
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">29
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">30
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">31
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">32
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">33
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">34
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">35
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">36
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">37
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">38
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">39
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">40
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">41
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">42
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">43
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">44
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">45
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">46
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">47
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">48
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">49
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">50
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">51
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">52
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">53
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">54
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">55
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">56
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">57
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">58
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">59
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">60
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">61
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#7c7c79">62
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">defmodule <span style="color:#a6e22e">PortsExample.TrapProcessCrash</span> do
+  use <span style="color:#a6e22e">GenServer</span>
+  require <span style="color:#a6e22e">Logger</span>
+
+  <span style="color:#a6e22e">@command</span> <span style="color:#e6db74">&#34;./bin/long_running.rb&#34;</span>
+
+  <span style="color:#75715e"># GenServer API</span>
+  def start_link(args \\ [], opts \\ []) do
+    <span style="color:#a6e22e">GenServer</span><span style="color:#f92672">.</span>start_link(__MODULE__, args, opts)
+  end
+
+  def init(args \\ []) do
+    <span style="color:#a6e22e">Process</span><span style="color:#f92672">.</span>flag(<span style="color:#e6db74">:trap_exit</span>, true)
+
+    port <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>open({<span style="color:#e6db74">:spawn</span>, <span style="color:#a6e22e">@command</span>}, [<span style="color:#e6db74">:binary</span>, <span style="color:#e6db74">:exit_status</span>])
+    <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>monitor(port)
+
+    {<span style="color:#e6db74">:ok</span>, %{<span style="color:#e6db74">port</span>: port, <span style="color:#e6db74">latest_output</span>: nil, <span style="color:#e6db74">exit_status</span>: nil} }
+  end
+
+  def terminate(reason, %{<span style="color:#e6db74">port</span>: port} <span style="color:#f92672">=</span> state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;** TERMINATE: </span><span style="color:#e6db74">#{</span>inspect reason<span style="color:#e6db74">}</span><span style="color:#e6db74">. This is the last chance to clean up after this process.&#34;</span>
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Final state: </span><span style="color:#e6db74">#{</span>inspect state<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    port_info <span style="color:#f92672">=</span> <span style="color:#a6e22e">Port</span><span style="color:#f92672">.</span>info(port)
+    os_pid <span style="color:#f92672">=</span> port_info[<span style="color:#e6db74">:os_pid</span>]
+
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>warn <span style="color:#e6db74">&#34;Orphaned OS process: </span><span style="color:#e6db74">#{</span>os_pid<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    <span style="color:#e6db74">:normal</span>
+  end
+
+  <span style="color:#75715e"># This callback handles data incoming from the command&#39;s STDOUT</span>
+  def handle_info({port, {<span style="color:#e6db74">:data</span>, text_line}}, %{<span style="color:#e6db74">port</span>: port} <span style="color:#f92672">=</span> state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Data: </span><span style="color:#e6db74">#{</span>inspect text_line<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">latest_output</span>: <span style="color:#a6e22e">String</span><span style="color:#f92672">.</span>trim(text_line)}}
+  end
+
+  <span style="color:#75715e"># This callback tells us when the process exits</span>
+  def handle_info({port, {<span style="color:#e6db74">:exit_status</span>, status}}, %{<span style="color:#e6db74">port</span>: port} <span style="color:#f92672">=</span> state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Port exit: :exit_status: </span><span style="color:#e6db74">#{</span>status<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+
+    new_state <span style="color:#f92672">=</span> %{state <span style="color:#f92672">|</span> <span style="color:#e6db74">exit_status</span>: status}
+
+    {<span style="color:#e6db74">:noreply</span>, new_state}
+  end
+
+  def handle_info({<span style="color:#e6db74">:DOWN</span>, _ref, <span style="color:#e6db74">:port</span>, port, <span style="color:#e6db74">:normal</span>}, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Handled :DOWN message from port: </span><span style="color:#e6db74">#{</span>inspect port<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, state}
+  end
+
+  def handle_info({<span style="color:#e6db74">:EXIT</span>, port, <span style="color:#e6db74">:normal</span>}, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;handle_info: EXIT&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, state}
+  end
+
+  def handle_info(msg, state) do
+    <span style="color:#a6e22e">Logger</span><span style="color:#f92672">.</span>info <span style="color:#e6db74">&#34;Unhandled message: </span><span style="color:#e6db74">#{</span>inspect msg<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+    {<span style="color:#e6db74">:noreply</span>, state}
+  end
+end</code></pre></td></tr></table>
+</div>
+</div>
+
+<p>The main difference here are the additions of <code>Process.flag(:trap_exit, true)</code> at the top of  <code>init/1</code>,
+and the corresponding implementation of <code>terminate/2</code> which our GenServer process is notified of when the process goes down, e.g. calling <code>Process.exit(pid, :normal)</code>.
+Now, let&rsquo;s start TrapProcessCrash, and crash it while it&rsquo;s running by using this:</p>
+<div class="highlight"><pre style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-elixir" data-lang="elixir">{<span style="color:#e6db74">:ok</span>, pid} <span style="color:#f92672">=</span> <span style="color:#a6e22e">PortsExample.TrapProcessCrash</span><span style="color:#f92672">.</span>start_link()
+
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">56</span>:<span style="color:#ae81ff">16.211</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Starting up</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">56</span>:<span style="color:#ae81ff">17.214</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Progress: step 1 of 10</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">56</span>:<span style="color:#ae81ff">18.214</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Progress: step 2 of 10</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">56</span>:<span style="color:#ae81ff">19.215</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Progress: step 3 of 10</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
+
+iex(<span style="color:#ae81ff">15</span>)<span style="color:#f92672">&gt;</span> <span style="color:#a6e22e">Process</span><span style="color:#f92672">.</span>exit(pid, <span style="color:#e6db74">:normal</span>)
+
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">50</span>:<span style="color:#ae81ff">11.138</span> [info]  <span style="color:#f92672">**</span> <span style="color:#e6db74">TERMINATE</span>: <span style="color:#e6db74">:normal</span><span style="color:#f92672">.</span> <span style="color:#a6e22e">This</span> is the last chance to clean up after this process<span style="color:#f92672">.</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">50</span>:<span style="color:#ae81ff">11.138</span> [info]  <span style="color:#a6e22e">Final</span> <span style="color:#e6db74">state</span>: %{<span style="color:#e6db74">exit_status</span>: nil, <span style="color:#e6db74">latest_output</span>: <span style="color:#e6db74">&#34;Progress: step 1 of 10&#34;</span>, <span style="color:#e6db74">port</span>: <span style="color:#75715e">#Port&lt;0.77&gt;}</span>
+<span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">50</span>:<span style="color:#ae81ff">11.138</span> [warn]  <span style="color:#a6e22e">Orphaned</span> <span style="color:#a6e22e">OS</span> <span style="color:#e6db74">process</span>: <span style="color:#ae81ff">21094</span></code></pre></div>
+<p>Clearly, an orphaned process is a Bad Thing&trade;, so scope out the &ldquo;Zombie Processes&rdquo; Caveat below!</p>
+
+<h2 id="other-thoughts-that-s-a-wrap">Other thoughts + that&rsquo;s a wrap!</h2>
+
+<p>It might be advantageous to use <code>Port.info/1</code> right when you open the port and store the operating system process ID in the state. But as long as you have the reference to the port somewhere, you&rsquo;ll have access to it.</p>
+
+<p>And that&rsquo;s the basics of dealing with external processes in Elixir using the Port module. There are a few other useful functions in the Port module, most notably <code>Port.command/3</code> which allows you to send data back to the external command. This could be useful if you have a program that requires some sort of interactivity or user input.</p>
+
+<h2 id="caveats">Caveats</h2>
+
+<h3 id="argument-sanitizing">Argument sanitizing</h3>
+
+<p><em>Do not pass user input directly through to the command in <code>Port.open</code>!</em> If your call looks something like this: <code>Port.open({:spawn, &quot;/path/to/bin #{user_input}&quot;})</code>, you should be very, very afraid!</p>
+
+<h3 id="zombie-processes">Zombie processes</h3>
+
+<p>The GenServer is keeping an eye on the ruby script, and it can kill it off, but what happens if the entire VM goes away?  <a href="https://hexdocs.pm/elixir/Port.html#module-zombie-os-processes">the Elixir docs</a> present a simple, wrapper script-based solution for ensuring processes go away after they&rsquo;re finished.</p>
+
+<h2 id="code-repo">Code repo</h2>
+
+<p>The code for the examples in this article is located here: <a href="https://github.com/tonyc/elixir_ports_example">tonyc/elixir_ports_example</a></p>
+
+<h2 id="open-tabs">Open Tabs</h2>
+
+<ul>
+  <li><a href="https://hexdocs.pm/elixir/Port.html">Elixir Port docs</a></li>
+  <li><a href="https://www.theerlangelist.com/article/outside_elixir">Outside Elixir</a> by Saša Jurić</li>
+  <li><a href="http://coolerranch.com/on-ports/">Primer on Ports</a></li>
+  <li>
+    <a href="https://medium.com/@cschneid/background-jobs-in-elixir-phoenix-60dddf4ce207">Background Jobs in Elixir &amp; Phoenix</a>
+  </li>
+  <li><a href="https://github.com/alco/porcelain">Porcelain (github)</a></li>
+  <li><a href="http://erlang.org/doc/man/erlang.html#port_info-1">Erlang reference: port_info</a></li>
+</ul>
+
+    </div>
+  </article>
+
+    </main>
+  </body>
+</html>

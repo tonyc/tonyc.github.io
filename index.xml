@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>tonyc.github.io</title>
+    <link>https://tonyc.github.io/</link>
+    <description>Recent content on tonyc.github.io</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Mon, 21 Jan 2019 19:11:51 -0600</lastBuildDate>
+    
+	<atom:link href="https://tonyc.github.io/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    <item>
+      <title>Managing External Commands in Elixir with Ports</title>
+      <link>https://tonyc.github.io/posts/managing-external-commands-in-elixir-with-ports/</link>
+      <pubDate>Mon, 21 Jan 2019 19:11:51 -0600</pubDate>
+      
+      <guid>https://tonyc.github.io/posts/managing-external-commands-in-elixir-with-ports/</guid>
+      <description>Background Elixir and OTP excel at asynchronous and long-running tasks, and likewise, they seem like a great fit for interfacing with the non-Elixir world, particularly being able to shell-out and monitor a long running external OS process.
+In the Ruby world, we often reach for tools like Sidekiq or Resque to run these commands asynchronously, outside of the normal HTTP request/response cycle that we&amp;rsquo;re used to when we usually build an app or API with Rails.</description>
+    </item>
+    
+  </channel>
+</rss>
