@@ -544,7 +544,7 @@ iex(<span style="color:#ae81ff">15</span>)<span style="color:#f92672">&gt;</span
 
 <h3 id="argument-sanitizing">Argument sanitizing</h3>
 
-<p><em>Do not pass user input directly through to the command in <code>Port.open</code>!</em> If your call looks something like this: <code>Port.open({:spawn, &quot;/path/to/bin #{user_input}&quot;})</code>, you should be very, very afraid!</p>
+<p><em>Do not pass user input directly through to the command in <code>Port.open</code>!</em> If your call looks something like this: <code>Port.open({:spawn, &quot;/path/to/bin #{user_input}&quot;})</code>, this is a hint that you might have a potential security hole.</p>
 
 <h3 id="zombie-processes">Zombie processes</h3>
 
