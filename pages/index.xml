@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Pages on tonyc.github.io</title>
+    <link>https://tonyc.github.io/pages/</link>
+    <description>Recent content in Pages on tonyc.github.io</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Sun, 20 Jan 2019 09:36:33 -0600</lastBuildDate>
+    
+	<atom:link href="https://tonyc.github.io/pages/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    <item>
+      <title>About Me</title>
+      <link>https://tonyc.github.io/pages/about/</link>
+      <pubDate>Sun, 20 Jan 2019 09:36:33 -0600</pubDate>
+      
+      <guid>https://tonyc.github.io/pages/about/</guid>
+      <description>I&amp;rsquo;m a software engineer based out of the Minneapolis/Saint Paul, Minnesota area.
+I run a small boutique software development shop called Halogen Labs, where I work with startsup &amp;amp; small companies to architect, design, and build web applications and APIs to solve their business problems or build products.
+My interests include Elixir, Ruby, GIS &amp;amp; geospatial data, and amateur radio.</description>
+    </item>
+    
+  </channel>
+</rss>
