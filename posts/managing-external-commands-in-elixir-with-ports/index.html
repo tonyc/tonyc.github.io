@@ -230,7 +230,7 @@ end</code></pre></td></tr></table>
 </div>
 
 <p>There&rsquo;s a bit of GenServer boilerplate here, but most of the meat is in <code>init/1</code>, where we call
-<a href="https://hexdocs.pm/elixir/Port.html#open/2">Port.open/2&gt;</a> to register our process to receive messages.</p>
+<a href="https://hexdocs.pm/elixir/Port.html#open/2">Port.open/2</a> to register our process to receive messages.</p>
 
 <p>Our GenServer will now get messages as a tuple in the format of <code>{port, {:data, text}}</code> that we can deal with in a <code>handle_info</code> callback.</p>
 
@@ -273,7 +273,7 @@ we were also notified when the process exited, as well as the exit code from the
 %{<span style="color:#e6db74">exit_status</span>: <span style="color:#ae81ff">0</span>, <span style="color:#e6db74">latest_output</span>: <span style="color:#e6db74">&#34;Done&#34;</span>}</code></pre></div>
 <h2 id="monitoring-the-port">Monitoring the port</h2>
 
-<p>We can also be notified when the command exits in other ways, by using <code>Port.monitor/1</code>. Calling it will set up your GenServer to get a <code>handle_info</code> callback in the form of <code>{:DOWN, _ref, :port, port, :normal}, state</code>:</p>
+<p>We can also be notified when the command exits in other ways by using <code>Port.monitor/1</code>. Calling it will set up your GenServer to get a <code>handle_info</code> callback in the form of <code>{:DOWN, _ref, :port, port, :normal}, state</code>:</p>
 
 <div class="highlight"><div style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
 <table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
@@ -374,7 +374,7 @@ end</code></pre></td></tr></table>
 <span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.304</span> [info]  <span style="color:#e6db74">Data</span>: <span style="color:#e6db74">&#34;Done</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>
 <span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.306</span> [info]  <span style="color:#a6e22e">Port</span> <span style="color:#e6db74">exit</span>: <span style="color:#e6db74">:exit_status</span>: <span style="color:#ae81ff">0</span>
 <span style="color:#ae81ff">17</span>:<span style="color:#ae81ff">30</span>:<span style="color:#ae81ff">43.306</span> [info]  <span style="color:#a6e22e">Handled</span> <span style="color:#e6db74">:DOWN</span> message from <span style="color:#e6db74">port</span>: <span style="color:#75715e">#Port&lt;0.53&gt;</span></code></pre></div>
-<p>You can use <code>Port.monitor</code> when you want additional information about when the command you&rsquo;re running exits, although I&rsquo;m not entirely sure what the benefit is of using it over using the <code>:exit_status</code> message, since you get a bit more information about the command&rsquo;s shell exit code with the <code>:exit_status</code> method.</p>
+<p>You can use <code>Port.monitor</code> when you want additional information about when the command you&rsquo;re running exits. I&rsquo;m not entirely sure what the benefit is of using it over using the <code>:exit_status</code> message, since you get a bit more information about the command&rsquo;s shell exit code with the <code>:exit_status</code> method.</p>
 
 <h2 id="trapping-process-exits">Trapping process exits</h2>
 
